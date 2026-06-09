@@ -1,0 +1,9 @@
+.env
+
+cloudflared/*.json
+cloudflared/config.yml
+
+/local-files
+/backups
+
+workflows/*.json

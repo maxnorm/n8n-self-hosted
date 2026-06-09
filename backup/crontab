@@ -1,0 +1,6 @@
+# Every day at 2:00 AM
+0 2 * * * /app/backup-db.sh >> /var/log/backup.log 2>&1
+# Every day at 3:00 AM
+0 3 * * * /app/backup-n8n-data.sh >> /var/log/backup.log 2>&1
+# Every hour — export workflows to /workflows
+0 * * * * /app/export-workflows.sh >> /var/log/backup.log 2>&1

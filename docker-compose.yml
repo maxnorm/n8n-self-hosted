@@ -1,0 +1,170 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: n8n-postgres
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - db-net
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:2.25.6
+    container_name: n8n-core
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - db-net
+      - services
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: ${N8N_PORT}
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
+
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${TZ}
+
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_PERSONALIZATION_ENABLED: ${N8N_PERSONALIZATION_ENABLED}
+      N8N_DIAGNOSTICS_ENABLED: ${N8N_DIAGNOSTICS_ENABLED}
+      N8N_VERSION_NOTIFICATIONS_ENABLED: ${N8N_VERSION_NOTIFICATIONS_ENABLED}
+
+      N8N_RUNNERS_MODE: ${N8N_RUNNERS_MODE}
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN}
+
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: ${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS}
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL}
+      N8N_LOG_OUTPUT: ${N8N_LOG_OUTPUT}
+
+      EXECUTIONS_DATA_PRUNE: ${EXECUTIONS_DATA_PRUNE}
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT}
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS: ${EXECUTIONS_DATA_SAVE_ON_PROGRESS}
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: ${EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS}
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: ${EXECUTIONS_DATA_SAVE_ON_SUCCESS}
+      EXECUTIONS_DATA_SAVE_ON_ERROR: ${EXECUTIONS_DATA_SAVE_ON_ERROR}
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY_PRODUCTION_LIMIT}
+      N8N_WORKFLOW_AUTODEACTIVATION_ENABLED: ${N8N_WORKFLOW_AUTODEACTIVATION_ENABLED}
+      N8N_WORKFLOW_AUTODEACTIVATION_MAX_LAST_EXECUTIONS: ${N8N_WORKFLOW_AUTODEACTIVATION_MAX_LAST_EXECUTIONS}
+
+      DB_TYPE: ${DB_TYPE}
+      DB_POSTGRESDB_HOST: ${DB_POSTGRESDB_HOST}
+      DB_POSTGRESDB_PORT: ${DB_POSTGRESDB_PORT}
+      DB_POSTGRESDB_DATABASE: ${DB_POSTGRESDB_DATABASE}
+      DB_POSTGRESDB_USER: ${DB_POSTGRESDB_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: ${DB_POSTGRESDB_SCHEMA}
+
+      N8N_INSTANCE_OWNER_MANAGED_BY_ENV: ${N8N_INSTANCE_OWNER_MANAGED_BY_ENV}
+      N8N_INSTANCE_OWNER_EMAIL: ${N8N_INSTANCE_OWNER_EMAIL}
+      N8N_INSTANCE_OWNER_FIRST_NAME: ${N8N_INSTANCE_OWNER_FIRST_NAME}
+      N8N_INSTANCE_OWNER_LAST_NAME: ${N8N_INSTANCE_OWNER_LAST_NAME}
+      N8N_INSTANCE_OWNER_PASSWORD_HASH: ${N8N_INSTANCE_OWNER_PASSWORD_HASH}
+
+      N8N_PUBLIC_API_ENABLED: ${N8N_PUBLIC_API_ENABLED}
+      N8N_INSTANCE_OWNER_PASSWORD: ${N8N_INSTANCE_OWNER_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+      - ./workflows:/workflows
+      - ./entrypoint.sh:/scripts/entrypoint.sh:ro
+      - ./scripts/create-api-key.sh:/scripts/create-api-key.sh:ro
+
+  n8n-runner:
+    image: n8nio/runners:2.25.6
+    container_name: n8n-runner
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - services
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    environment:
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN}
+    depends_on:
+      n8n:
+        condition: service_healthy
+
+  cloudflare-tunnel:
+    image: cloudflare/cloudflared:2026.5.2
+    container_name: n8n-tunnel
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - services
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on:
+      n8n:
+        condition: service_healthy
+
+  backup:
+    build: ./backup
+    container_name: n8n-backup
+    restart: unless-stopped
+    logging: *default-logging
+    init: true
+    networks:
+      - db-net
+      - services
+    depends_on:
+      postgres:
+        condition: service_healthy
+      n8n:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      N8N_API_KEY_FILE: /n8n-data/.api-key
+    volumes:
+      - n8n_data:/n8n-data:ro
+      - ./backups:/backups
+      - ./workflows:/workflows
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  db-net:
+    internal: true
+  services:
