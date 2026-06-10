@@ -82,33 +82,84 @@ docker compose up -d   # entrypoint imports from ./workflows/
 1. Delete it in the n8n editor
 2. Sync the deletion: `./scripts/pull-workflows.sh`
 
-## Cloudflare Tunnel (optional)
+## Cloudflare Tunnel
 
-Exposes n8n over HTTPS with a stable DNS name for webhooks and remote access. Port 5678 is not exposed to the host when using the tunnel.
+Exposes n8n over HTTPS with a stable DNS name for webhooks and remote access.
 
-1. Create a tunnel in Cloudflare and download the **credentials JSON** to `cloudflared/<tunnel-uuid>.json`
+### Prerequisites
 
-2. Copy and edit the config:
+- A [Cloudflare](https://cloudflare.com/) account with a domain added
+- `cloudflared` installed on your local machine ([install docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/))
 
-   ```sh
-   cp cloudflared/config.example.yml cloudflared/config.yml
-   ```
+### 1. Authenticate with Cloudflare
 
-   Set `tunnel`, `credentials-file` (path inside container: `/etc/cloudflared/<uuid>.json`), and `ingress` hostname.
+```sh
+cloudflared tunnel login
+```
 
-3. Update `.env` for your public URL:
+Opens a browser — select the domain you want to use. This saves a certificate to `~/.cloudflared/cert.pem`.
 
-   ```
-   N8N_HOST=n8n.example.com
-   N8N_PROTOCOL=https
-   N8N_PROXY_HOPS=1
-   WEBHOOK_URL=https://n8n.example.com/
-   N8N_EDITOR_BASE_URL=https://n8n.example.com/
-   ```
+### 2. Create the tunnel
 
-4. Start: `docker compose up -d`
+```sh
+cloudflared tunnel create n8n
+```
 
-To run **without** the tunnel, remove the `cloudflare-tunnel` service from `docker-compose.yml` or stop it with `docker compose stop cloudflare-tunnel`.
+Output shows the tunnel UUID (e.g. `a1b2c3d4-...`). A credentials file is created at `~/.cloudflared/<UUID>.json`.
+
+### 3. Copy the credentials to this project
+
+```sh
+cp ~/.cloudflared/<UUID>.json ./cloudflared/
+```
+
+### 4. Configure the tunnel
+
+```sh
+cp cloudflared/config.example.yml cloudflared/config.yml
+```
+
+Edit `cloudflared/config.yml`:
+
+```yaml
+tunnel: <UUID>
+credentials-file: /etc/cloudflared/<UUID>.json
+
+ingress:
+  - hostname: n8n.example.com
+    service: http://n8n:5678
+  - service: http_status:404
+```
+
+Replace `<UUID>` and `n8n.example.com` with your values.
+
+### 5. Route DNS
+
+```sh
+cloudflared tunnel route dns <UUID> n8n.example.com
+```
+
+This creates a CNAME record pointing `n8n.example.com` to `<UUID>.cfargotunnel.com`. Verify it in the Cloudflare DNS dashboard (proxy must be enabled / orange cloud).
+
+### 6. Update `.env`
+
+Set these to match your public URL:
+
+```
+N8N_HOST=n8n.example.com
+N8N_PROTOCOL=https
+N8N_PROXY_HOPS=1
+WEBHOOK_URL=https://n8n.example.com/
+N8N_EDITOR_BASE_URL=https://n8n.example.com/
+```
+
+### 7. Start
+
+```sh
+docker compose up -d
+```
+
+n8n is now accessible at `https://n8n.example.com`.
 
 ## Pinned Versions
 
